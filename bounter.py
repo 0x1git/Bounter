@@ -11,8 +11,12 @@ def execute_system_command_impl(command: str) -> dict:
     Returns:
         A dictionary containing the command output and execution details.
     """
-     # Let the AI agent decide the appropriate command based on the platform
+    # Let the AI agent decide the appropriate command based on the platform
     # No hardcoding - the agent will autonomously determine the correct command
+    
+    # Show real-time execution feedback
+    print(f"\n🔧 EXECUTING COMMAND: {command}")
+    print("-" * 40)
     
     try:
         result = subprocess.run(
@@ -24,6 +28,16 @@ def execute_system_command_impl(command: str) -> dict:
             text=True,
             timeout=30  # Add timeout for safety
         )
+        
+        # Show command output in real-time
+        if result.stdout.strip():
+            print(f"✅ STDOUT:\n{result.stdout.strip()}")
+        if result.stderr.strip():
+            print(f"⚠️  STDERR:\n{result.stderr.strip()}")
+        
+        print(f"📊 Return Code: {result.returncode}")
+        print("-" * 40)
+        
         return {
             "stdout": result.stdout.strip(),
             "stderr": result.stderr.strip(),
@@ -32,6 +46,14 @@ def execute_system_command_impl(command: str) -> dict:
             "success": True
         }
     except subprocess.CalledProcessError as e:
+        print(f"❌ COMMAND FAILED:")
+        print(f"Return Code: {e.returncode}")
+        if e.stdout:
+            print(f"STDOUT: {e.stdout.strip()}")
+        if e.stderr:
+            print(f"STDERR: {e.stderr.strip()}")
+        print("-" * 40)
+        
         return {
             "stdout": e.stdout.strip() if e.stdout else "",
             "stderr": e.stderr.strip() if e.stderr else "",
@@ -41,6 +63,9 @@ def execute_system_command_impl(command: str) -> dict:
             "success": False
         }
     except subprocess.TimeoutExpired:
+        print(f"⏰ COMMAND TIMED OUT after 30 seconds")
+        print("-" * 40)
+        
         return {
             "stdout": "",
             "stderr": "Command timed out after 30 seconds",
@@ -52,15 +77,17 @@ def execute_system_command_impl(command: str) -> dict:
 # Configure the client for autonomous operation with thinking enabled
 client = genai.Client()
 config = types.GenerateContentConfig(
-    system_instruction="""You are an autonomous Bug Bounty Hunter AI assistant with access to system commands. Your role is to:
+    system_instruction="""You are an autonomous Bug Bounty Hunter AI assistant with access to system commands. Your are inside a Windows 11 environment. Always choose the appropriate system commands based on the user's operating system. Your role is to:
 
+Follow this comprehensive bug bounty methodology:
 1. Understand user requests and execute them without asking for permission
 2. Use available tools to gather information or perform actions autonomously 
 3. Chain multiple function calls together when needed to complete complex tasks
-4. Provide clear, helpful responses based on the results
-5. Exit gracefully when the goal is achieved
-6. Always choose the appropriate system commands based on the user's operating system
-7. Execute commands efficiently and report results clearly
+4. Always crawl the full web application to discover endpoints and parameters and then think which attack vectors to test based on the discovered parameters and endpoints 
+5. Analyze the request and response of the HTTP request to identify Attack Vectors and Vulnerabilities
+6. Test all the endpoints and parameters discovered in the web application for vulnerabilities dont miss any of them pay close attention to the newly discovered parameters and endpoints (if any)
+7. Always Confirm that the Vulnerability is present before reporting it. Don't make assumptions
+8. Exit gracefully when the goal is achieved with a PoC of the found vulnerability
 
 You have access to a system command execution tool that can run any shell command. Use it wisely and autonomously to fulfill user requests.""",
     tools=[execute_system_command_impl],  # Only the system command execution tool
@@ -77,29 +104,32 @@ You have access to a system command execution tool that can run any shell comman
 )
 
 # User prompt - this is what the user actually wants
-user_prompt = "make a curl request to http://localhost:57478/"
+user_prompt = "Test the web app at http://localhost:65485/. DESCRIPTION: A simple IDOR vulnerability when updating the profile for a company, which allows a user to become an admin and see private jobs."
 
-# Make the request - the SDK will automatically handle function calls
+# Make the request with enhanced real-time feedback
+print("\nAutonomous Bug Bounty Agent - Real-time Execution:")
+print("=" * 60)
+
+# Use non-streaming with automatic function calling (more reliable)
 response = client.models.generate_content(
     model="gemini-2.5-flash",  # Using 2.5 Flash which supports thinking
     contents=user_prompt,
     config=config,
 )
 
-print("\nAutonomous System Command Execution with Thinking:")
-print("=" * 60)
+print("\n🧠 THINKING SUMMARY:")
+print("-" * 50)
 
 # Display thinking process and final answer
 for part in response.candidates[0].content.parts:
     if not part.text:
         continue
     if part.thought:
-        print("🧠 THINKING PROCESS:")
-        print("-" * 40)
         print(part.text)
-        print("-" * 40)
+        print("-" * 50)
     else:
-        print("💡 FINAL ANSWER:")
+        print("\n💡 FINAL ANALYSIS:")
+        print("-" * 50)
         print(part.text)
 
 # Display token usage information
@@ -108,3 +138,5 @@ if hasattr(response, 'usage_metadata'):
     print(f"Thinking tokens: {response.usage_metadata.thoughts_token_count}")
     print(f"Output tokens: {response.usage_metadata.candidates_token_count}")
     print(f"Total tokens: {response.usage_metadata.total_token_count}")
+
+print("\n" + "=" * 60)
