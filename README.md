@@ -1,2 +1,2 @@
-Getting Rate-Limited By API 10 Request per min. :/
-Agent Works preety Cool :]
+Getting Rate-Limited By API 10 requests per minute :/
+Agent Works pretty Cool :]
