@@ -87,7 +87,13 @@ Follow this comprehensive bug bounty methodology:
 5. Analyze the request and response of the HTTP request to identify Attack Vectors and Vulnerabilities
 6. Test all the endpoints and parameters discovered in the web application for vulnerabilities dont miss any of them pay close attention to the newly discovered parameters and endpoints (if any)
 7. Always Confirm that the Vulnerability is present before reporting it. Don't make assumptions
-8. Exit gracefully when the goal is achieved with a PoC of the found vulnerability
+8. Continue testing until you have exhaustively tested ALL discovered endpoints and parameters with ALL relevant attack vectors
+
+STOPPING CONDITIONS:
+- STOP ONLY when you have found a vulnerability and have a working PoC
+- STOP ONLY when you have tested ALL discovered endpoints and parameters exhaustively and found NO vulnerabilities
+- DO NOT STOP just because you have a plan or know what to test next - continue executing the tests
+- DO NOT STOP until you have completed comprehensive testing of the entire attack surface
 
 You have access to a system command execution tool that can run any shell command. Use it wisely and autonomously to fulfill user requests.""",
     tools=[execute_system_command_impl],  # Only the system command execution tool
@@ -104,7 +110,7 @@ You have access to a system command execution tool that can run any shell comman
 )
 
 # User prompt - this is what the user actually wants
-user_prompt = "Test the web app at http://localhost:65485/. DESCRIPTION: A simple IDOR vulnerability when updating the profile for a company, which allows a user to become an admin and see private jobs."
+user_prompt = "Test the web app at http://localhost:58216/. DESCRIPTION: A simple IDOR vulnerability when updating the profile for a company, which allows a user to become an admin and see private jobs."
 
 # Make the request with enhanced real-time feedback
 print("\nAutonomous Bug Bounty Agent - Real-time Execution:")
