@@ -25,9 +25,37 @@ class BounterAgent:
         self.client = client or genai.Client()
         self.verbose = verbose
 
+    RATE_LIMIT_KEYWORDS = (
+        "rate limit",
+        "rate-limit",
+        "quota",
+        "too many requests",
+        "429",
+        "limit reached",
+    )
+
     def _log(self, message: str) -> None:
         if self.verbose:
             print(f"[agent] {message}")
+
+    def _response_indicates_rate_limit(self, response: genai.types.GenerateContentResponse) -> bool:
+        """Best-effort detection when the model reports a rate-limit in text."""
+
+        try:
+            candidates = getattr(response, "candidates", []) or []
+        except AttributeError:
+            return False
+
+        for candidate in candidates:
+            parts = getattr(candidate, "content", None)
+            for part in getattr(parts, "parts", []) or []:
+                text = getattr(part, "text", "")
+                if not text:
+                    continue
+                lower = text.lower()
+                if any(keyword in lower for keyword in self.RATE_LIMIT_KEYWORDS):
+                    return True
+        return False
 
     def build_prompt(self, target: str, description: str) -> str:
         """Compose the user prompt delivered to the Gemini model."""
@@ -54,6 +82,9 @@ class BounterAgent:
             # next model knows what has been tested so far.
             if len(tried_models) > 1:
                 context_lines = []
+                context_lines.append(
+                    "Previously attempted models: " + ", ".join(tried_models[:-1])
+                )
                 if self.report.commands:
                     context_lines.append("Commands executed so far:")
                     for cmd in self.report.commands:
@@ -83,6 +114,15 @@ class BounterAgent:
                 )
                 self._log(f"Model '{model_name}' responded successfully")
                 self.report.update_from_response(response)
+
+                if self._response_indicates_rate_limit(response):
+                    self._log(
+                        f"Model '{model_name}' reported a rate limit in its response; switching models"
+                    )
+                    # end_time tracks the last response time, but the scan is still ongoing
+                    self.report.end_time = None
+                    continue
+
                 return response
             except genai.errors.ClientError as exc:  # pragma: no cover - depends on API
                 last_exception = exc
