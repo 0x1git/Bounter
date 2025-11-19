@@ -102,7 +102,9 @@ class BounterAgent:
             tool_fn = build_system_command_tool(
                 report=self.report, timeout=self.config.command_timeout
             )
-            content_config = self.config.build_content_config([tool_fn])
+            content_config = self.config.build_content_config(
+                [tool_fn], model_name=model_name
+            )
 
             self._log(
                 f"Dispatching prompt to model '{model_name}' (attempt {len(tried_models)})"

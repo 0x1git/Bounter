@@ -31,9 +31,7 @@ def build_system_command_tool(
             stdout = result.stdout.strip()
             stderr = result.stderr.strip()
             if stdout:
-                print(f"✅ STDOUT:\n{stdout}")
-            if stderr:
-                print(f"⚠️  STDERR:\n{stderr}")
+                print(f"STDOUT:\n{stdout}")
             print(f" Return Code: {result.returncode}")
             print("-" * 40)
 
@@ -53,8 +51,6 @@ def build_system_command_tool(
             print(f"Return Code: {exc.returncode}")
             if stdout:
                 print(f"STDOUT: {stdout}")
-            if stderr:
-                print(f"STDERR: {stderr}")
             print("-" * 40)
             payload = {
                 "stdout": stdout,

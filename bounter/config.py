@@ -41,10 +41,16 @@ class BounterConfig:
     # Preferred model order to try when rate limits occur. The agent will
     # attempt these in order and move to the next one if a rate-limit is hit.
     models_order: Sequence[str] = (
+        "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
-        "gemini-2.5-flash",
         "gemini-2.0-flash-lite",
+    )
+
+    # Models that support "thinking" mode. Others will run without thinking.
+    thinking_supported_models: Sequence[str] = (
+        "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
     )
 
     # Per-model rate limits (requests per minute). Used for documentation
@@ -69,6 +75,12 @@ class BounterConfig:
             models_order=tuple(
                 os.getenv("BOUNTER_MODELS_ORDER", ",".join(cls.models_order)).split(",")
             ),
+            thinking_supported_models=tuple(
+                os.getenv(
+                    "BOUNTER_THINKING_MODELS",
+                    ",".join(cls.thinking_supported_models),
+                ).split(",")
+            ),
             model_rate_limits={
                 "gemini-2.5-flash": int(os.getenv("BOUNTER_RATE_gemini_2_5_flash", "10")),
                 "gemini-2.5-flash-lite": int(os.getenv("BOUNTER_RATE_gemini_2_5_flash_lite", "15")),
@@ -78,18 +90,22 @@ class BounterConfig:
         )
 
     def build_content_config(
-        self, tools: Sequence[types.ToolFunction]
+        self, tools: Sequence[types.ToolFunction], model_name: str
     ) -> types.GenerateContentConfig:
         """Create a GenerateContentConfig with the provided tools."""
+
+        thinking_config = None
+        if model_name in self.thinking_supported_models:
+            thinking_config = types.ThinkingConfig(
+                thinking_budget=self.thinking_budget,
+                include_thoughts=self.include_thoughts,
+            )
 
         return types.GenerateContentConfig(
             system_instruction=self.system_instruction,
             tools=list(tools),
             temperature=self.temperature,
-            thinking_config=types.ThinkingConfig(
-                thinking_budget=self.thinking_budget,
-                include_thoughts=self.include_thoughts,
-            ),
+            thinking_config=thinking_config,
             tool_config=types.ToolConfig(
                 function_calling_config=types.FunctionCallingConfig(mode="AUTO")
             ),
