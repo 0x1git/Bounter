@@ -7,7 +7,7 @@ Bounter is an autonomous bug bounty hunting tool that leverages Google's Gemini 
 
 ### Gemini AI Integration
 - **Primary API**: Use [Google Gemini API documentation](https://ai.google.dev/gemini-api/docs) for all AI-related code
-- **Model**: `gemini-2.5-flash` with thinking capabilities enabled
+- **Model**: `gemini-2.5-flash-lite` with thinking capabilities enabled
 - **Function Calling**: Uses `execute_system_command_impl` as the primary tool for autonomous system interaction
 - **Configuration Pattern**: Use `types.GenerateContentConfig` with strict system instructions for bug bounty methodology
 
@@ -20,7 +20,6 @@ result = subprocess.run(command, shell=True, check=True,
 ```
 - All system commands are executed through `execute_system_command_impl`
 - Commands run with 30-second timeout for safety
-- Rich console output with emoji indicators (🔧, ✅, ❌, ⚠️, ⏰, 📊)
 - Returns structured dict with stdout, stderr, return_code, and success status
 
 ### Bug Bounty Methodology
@@ -49,10 +48,8 @@ The AI follows this specific methodology with clear stopping conditions:
 
 
 ### Console Output Standards
-- Use structured console output with visual separators (`-` * 40, `=` * 60)
-- Include emoji indicators for different states
 - Always show token usage when available (thinking, output, total tokens)
-- Display both thinking summaries and final analysis separately
+- Display both thinking summaries
 
 ### Error Handling
 - Handle `subprocess.CalledProcessError` and `subprocess.TimeoutExpired`

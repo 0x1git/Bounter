@@ -1,148 +1,91 @@
-import subprocess
-from google import genai
-from google.genai import types
+"""CLI entry point for the Bounter agent."""
+from __future__ import annotations
 
-def execute_system_command_impl(command: str) -> dict:
-    """Executes a system command autonomously.
+from datetime import datetime
+from pathlib import Path
 
-    Args:
-        command: The command to execute. For directory queries, use 'pwd' on Unix-like systems or 'cd' on Windows.
+from bounter.agent import BounterAgent
+from bounter.cli import parse_args
+from bounter.config import BounterConfig
+from bounter.reporting import ScanReport
 
-    Returns:
-        A dictionary containing the command output and execution details.
-    """
-    # Let the AI agent decide the appropriate command based on the platform
-    # No hardcoding - the agent will autonomously determine the correct command
-    
-    # Show real-time execution feedback
-    print(f"\n🔧 EXECUTING COMMAND: {command}")
-    print("-" * 40)
-    
-    try:
-        result = subprocess.run(
-            command,
-            shell=True,
-            check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=30  # Add timeout for safety
-        )
-        
-        # Show command output in real-time
-        if result.stdout.strip():
-            print(f"✅ STDOUT:\n{result.stdout.strip()}")
-        if result.stderr.strip():
-            print(f"⚠️  STDERR:\n{result.stderr.strip()}")
-        
-        print(f"📊 Return Code: {result.returncode}")
-        print("-" * 40)
-        
-        return {
-            "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
-            "command_executed": command,
-            "return_code": result.returncode,
-            "success": True
-        }
-    except subprocess.CalledProcessError as e:
-        print(f"❌ COMMAND FAILED:")
-        print(f"Return Code: {e.returncode}")
-        if e.stdout:
-            print(f"STDOUT: {e.stdout.strip()}")
-        if e.stderr:
-            print(f"STDERR: {e.stderr.strip()}")
-        print("-" * 40)
-        
-        return {
-            "stdout": e.stdout.strip() if e.stdout else "",
-            "stderr": e.stderr.strip() if e.stderr else "",
-            "command_executed": command,
-            "return_code": e.returncode,
-            "error": str(e),
-            "success": False
-        }
-    except subprocess.TimeoutExpired:
-        print(f"⏰ COMMAND TIMED OUT after 30 seconds")
-        print("-" * 40)
-        
-        return {
-            "stdout": "",
-            "stderr": "Command timed out after 30 seconds",
-            "command_executed": command,
-            "error": "Timeout",
-            "success": False
-        }
 
-# Configure the client for autonomous operation with thinking enabled
-client = genai.Client()
-config = types.GenerateContentConfig(
-    system_instruction="""You are an autonomous Bug Bounty Hunter AI assistant with access to system commands. Your are inside a Windows 11 environment. Always choose the appropriate system commands based on the user's operating system. Your role is to:
+def _print_report(report: ScanReport) -> None:
+    """Echo the thinking summary, final analysis, and token usage."""
 
-Follow this comprehensive bug bounty methodology:
-1. Understand user requests and execute them without asking for permission
-2. Use available tools to gather information or perform actions autonomously 
-3. Chain multiple function calls together when needed to complete complex tasks
-4. Always crawl the full web application to discover endpoints and parameters and then think which attack vectors to test based on the discovered parameters and endpoints 
-5. Analyze the request and response of the HTTP request to identify Attack Vectors and Vulnerabilities
-6. Test all the endpoints and parameters discovered in the web application for vulnerabilities dont miss any of them pay close attention to the newly discovered parameters and endpoints (if any)
-7. Always Confirm that the Vulnerability is present before reporting it. Don't make assumptions
-8. Continue testing until you have exhaustively tested ALL discovered endpoints and parameters with ALL relevant attack vectors
-
-STOPPING CONDITIONS:
-- STOP ONLY when you have found a vulnerability and have a working PoC
-- STOP ONLY when you have tested ALL discovered endpoints and parameters exhaustively and found NO vulnerabilities
-- DO NOT STOP just because you have a plan or know what to test next - continue executing the tests
-- DO NOT STOP until you have completed comprehensive testing of the entire attack surface
-
-You have access to a system command execution tool that can run any shell command. Use it wisely and autonomously to fulfill user requests.""",
-    tools=[execute_system_command_impl],  # Only the system command execution tool
-    temperature=0,  # Low temperature for more deterministic function calls
-    thinking_config=types.ThinkingConfig(
-        thinking_budget=-1,  # Dynamic thinking: model decides when and how much to think
-        include_thoughts=True  # Include thought summaries to show reasoning process
-    ),
-    tool_config=types.ToolConfig(
-        function_calling_config=types.FunctionCallingConfig(
-            mode="AUTO"  # Let model decide when to use functions
-        )
-    )
-)
-
-# User prompt - this is what the user actually wants
-user_prompt = "Test the web app at http://localhost:58216/. DESCRIPTION: A simple IDOR vulnerability when updating the profile for a company, which allows a user to become an admin and see private jobs."
-
-# Make the request with enhanced real-time feedback
-print("\nAutonomous Bug Bounty Agent - Real-time Execution:")
-print("=" * 60)
-
-# Use non-streaming with automatic function calling (more reliable)
-response = client.models.generate_content(
-    model="gemini-2.5-flash",  # Using 2.5 Flash which supports thinking
-    contents=user_prompt,
-    config=config,
-)
-
-print("\n🧠 THINKING SUMMARY:")
-print("-" * 50)
-
-# Display thinking process and final answer
-for part in response.candidates[0].content.parts:
-    if not part.text:
-        continue
-    if part.thought:
-        print(part.text)
-        print("-" * 50)
+    print("\n🧠 THINKING SUMMARY:")
+    print("-" * 50)
+    if report.thinking_summary:
+        for thought in report.thinking_summary:
+            print(thought)
+            print("-" * 50)
     else:
-        print("\n💡 FINAL ANALYSIS:")
-        print("-" * 50)
-        print(part.text)
+        print("No thinking output captured.")
 
-# Display token usage information
-if hasattr(response, 'usage_metadata'):
-    print(f"\n📊 TOKEN USAGE:")
-    print(f"Thinking tokens: {response.usage_metadata.thoughts_token_count}")
-    print(f"Output tokens: {response.usage_metadata.candidates_token_count}")
-    print(f"Total tokens: {response.usage_metadata.total_token_count}")
+    print("\n FINAL ANALYSIS:")
+    print("-" * 50)
+    if report.final_analysis:
+        print(report.final_analysis)
+    else:
+        print("Model did not return a final analysis.")
 
-print("\n" + "=" * 60)
+    if report.total_tokens is not None:
+        print("\n TOKEN USAGE:")
+        print(f"Thinking tokens: {report.thinking_tokens}")
+        print(f"Output tokens: {report.output_tokens}")
+        print(f"Total tokens: {report.total_tokens}")
+
+
+def _print_model_response(response) -> None:
+    """Display the raw response content returned by Gemini."""
+
+    print("\n📨 MODEL RESPONSE:")
+    print("-" * 50)
+    try:
+        candidates = getattr(response, "candidates", []) or []
+        if not candidates:
+            print("No candidates returned by the model.")
+            return
+        for idx, candidate in enumerate(candidates, start=1):
+            print(f"Candidate {idx}:")
+            parts = getattr(candidate, "content", None)
+            for part in getattr(parts, "parts", []) or []:
+                text = getattr(part, "text", "")
+                if not text:
+                    continue
+                label = "THOUGHT" if getattr(part, "thought", False) else "OUTPUT"
+                print(f"[{label}] {text}")
+            print("-" * 50)
+    except Exception as exc:  # pragma: no cover - defensive log only
+        print(f"Unable to display model response: {exc}")
+
+
+def _persist_report(report: ScanReport, report_dir: Path, prefix: str) -> None:
+    """Write JSON and Markdown snapshots to disk."""
+
+    timestamp = (report.end_time or datetime.utcnow()).strftime("%Y%m%d-%H%M%S")
+    base = report_dir / f"{prefix}-{timestamp}"
+    report.save_json(base.with_suffix(".json"))
+    report.save_markdown(base.with_suffix(".md"))
+    print(f"\n📝 Reports saved to {base.with_suffix('.json')} and {base.with_suffix('.md')}")
+
+
+def main() -> None:
+    """Entrypoint executed via `python bounter.py`."""
+
+    args = parse_args()
+    config = BounterConfig.from_env()
+    report = ScanReport(target=args.target, description=args.description)
+    agent = BounterAgent(config=config, report=report, verbose=args.verbose)
+
+    print("\nAutonomous Bug Bounty Agent - Real-time Execution:")
+    print("=" * 60)
+
+    response = agent.run(target=args.target, description=args.description)
+    _print_model_response(response)
+    _print_report(report)
+    _persist_report(report, args.report_dir, args.report_prefix)
+
+
+if __name__ == "__main__":
+    main()
