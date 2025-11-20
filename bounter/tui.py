@@ -11,7 +11,14 @@ from textual.app import App, ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal
 from textual.reactive import reactive
-from textual.widgets import Footer, Header, Input, Static, Log
+from textual.widgets import Footer, Header, Input, Static, RichLog
+
+from rich import box
+from rich.console import RenderableType
+from rich.markdown import Markdown
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
 
 from bounter.agent import BounterAgent
 from bounter.config import BounterConfig
@@ -95,7 +102,7 @@ class HelpPanel(Static):
         yield Static(self.body, id="body")
 
 
-class ConsoleLog(Log):
+class ConsoleLog(RichLog):
     """Log widget with clipboard shortcuts when focused."""
 
     BINDINGS = [
@@ -106,23 +113,23 @@ class ConsoleLog(Log):
     def action_copy_highlight(self) -> None:
         selection = self.text_selection
         if not selection:
-            self.write("[dim]Select text before pressing c/y to copy.[/dim]")
+            self.write(Text.from_markup("[dim]Select text before pressing c/y to copy.[/dim]"))
             return
 
         extracted = self.get_selection(selection)
         if not extracted:
-            self.write("[dim]Unable to read the current selection.[/dim]")
+            self.write(Text.from_markup("[dim]Unable to read the current selection.[/dim]"))
             return
 
         text, ending = extracted
         payload = f"{text}{ending or ''}".rstrip("\n")
         if not payload:
-            self.write("[dim]Selection was empty.[/dim]")
+            self.write(Text.from_markup("[dim]Selection was empty.[/dim]"))
             return
 
         if self.app:
             self.app.copy_to_clipboard(payload)
-        self.write("[dim]Copied selection to clipboard.[/dim]")
+        self.write(Text.from_markup("[dim]Copied selection to clipboard.[/dim]"))
 
 
 class BounterTUI(App):
@@ -303,9 +310,20 @@ class BounterTUI(App):
         if self.scanning:
             self._log("A scan is already running. Please wait.")
             return False
-        self._log(f"▶ Starting scan for {target}")
+        scan_table = Table.grid(padding=(0, 1))
+        scan_table.add_column(style="bold #f8e9b0", width=10)
+        scan_table.add_column()
+        scan_table.add_row("Target", target)
         if description and description != instruction_label:
-            self._log(f"  Context: {description}")
+            scan_table.add_row("Context", description)
+        scan_table.add_row("HiL", "enabled" if self._hil_mode else "disabled")
+        scan_panel = Panel(
+            scan_table,
+            title="Scan Started",
+            border_style="green",
+            padding=(1, 2),
+        )
+        self._log(scan_panel)
         self.scanning = True
         asyncio.create_task(
             self._run_scan(target, description, instruction_label)
@@ -333,13 +351,33 @@ class BounterTUI(App):
 
     def _emit_response_summary(self, report: ScanReport) -> None:
         if report.final_analysis:
-            self._log("--- Final Analysis ---")
-            self._log(report.final_analysis)
-        if report.total_tokens is not None:
-            self._log("--- Token Usage ---")
-            self._log(
-                f"Thinking: {report.thinking_tokens}, Output: {report.output_tokens}, Total: {report.total_tokens}"
+            final_text = report.final_analysis.strip()
+            analysis_renderable: RenderableType
+            if final_text:
+                analysis_renderable = Markdown(final_text)
+            else:
+                analysis_renderable = Text("No analysis provided.")
+            panel = Panel(
+                analysis_renderable,
+                title="Final Analysis",
+                border_style="bright_green",
+                padding=(1, 2),
             )
+            self._log(panel)
+        if report.total_tokens is not None:
+            token_table = Table.grid(padding=(0, 1))
+            token_table.add_column(style="bold white")
+            token_table.add_column(justify="right")
+            token_table.add_row("Thinking", str(report.thinking_tokens or 0))
+            token_table.add_row("Output", str(report.output_tokens or 0))
+            token_table.add_row("Total", str(report.total_tokens))
+            token_panel = Panel(
+                token_table,
+                title="Token Usage",
+                border_style="cyan",
+                box=box.ROUNDED,
+            )
+            self._log(token_panel)
 
     def _execute_scan(self, target: str, description: str, instruction_label: str):
         config = BounterConfig.from_env()
@@ -360,9 +398,26 @@ class BounterTUI(App):
         report.save_markdown(md_path)
         return str(json_path), str(md_path)
 
-    def _log(self, message: str) -> None:
-        text = message if message.endswith("\n") else f"{message}\n"
-        self.log_view.write(text)
+    def _log(
+        self,
+        message: RenderableType | str,
+        *,
+        style: str | None = None,
+        markup: bool = True,
+    ) -> None:
+        if isinstance(message, str):
+            renderable = (
+                Text.from_markup(message)
+                if markup
+                else Text(message)
+            )
+            if style:
+                renderable.stylize(style)
+            if not message.endswith("\n"):
+                renderable.append("\n")
+        else:
+            renderable = message
+        self.log_view.write(renderable)
 
     def _ensure_output_visible(self) -> None:
         if not getattr(self, "_output_visible", False):
@@ -374,9 +429,10 @@ class BounterTUI(App):
         if not getattr(self, "_intro_hidden", False):
             self._hide_intro_panels()
         if self._command_count:
-            self.log_view.write("")
+            self._log("")
         self._command_count += 1
-        self._log(f"$ {command}")
+        command_text = Text(f"$ {command}", style="bold cyan")
+        self._log(command_text, markup=False)
 
     def _hide_intro_panels(self) -> None:
         self.query_one(Banner).add_class("hidden-panel")
@@ -423,37 +479,71 @@ class BounterTUI(App):
             )
         return "\n".join(parts).strip()
 
-    def _build_transcript(self, instruction: str, report: ScanReport) -> list[str]:
-        lines: list[str] = []
+    def _build_transcript(
+        self, instruction: str, report: ScanReport
+    ) -> list[RenderableType]:
+        renderables: list[RenderableType] = []
         display_instruction = instruction.strip() or "Investigate the target"
-        lines.append(f"Instruction: {display_instruction}")
+        renderables.append(
+            Panel(
+                Text(display_instruction, style="bold white"),
+                title="Instruction",
+                border_style="yellow",
+                padding=(1, 2),
+            )
+        )
 
         if report.thinking_summary:
-            for thought in report.thinking_summary:
-                thought_lines = thought.splitlines() or [""]
-                for idx, chunk in enumerate(thought_lines):
-                    prefix = "✧ Thought: " if idx == 0 else "  "
-                    lines.append(f"{prefix}{chunk}")
+            for idx, thought in enumerate(report.thinking_summary, start=1):
+                thought_body = thought.strip()
+                if thought_body:
+                    thought_renderable: RenderableType = Markdown(thought_body)
+                else:
+                    thought_renderable = Text("<empty>")
+                renderables.append(
+                    Panel(
+                        thought_renderable,
+                        title=f"Thought #{idx}",
+                        border_style="magenta",
+                        padding=(1, 2),
+                    )
+                )
         else:
-            lines.append("✧ Thought: _model did not share its reasoning._")
+            renderables.append(
+                Panel(
+                    Text("Model did not share its reasoning."),
+                    title="Thoughts",
+                    border_style="magenta",
+                )
+            )
 
         if report.commands:
             for record in report.commands:
-                lines.append(f"🔧 Command: {record.command}")
-                stdout = record.stdout.strip()
-                stderr = record.stderr.strip()
-                if stdout:
-                    for chunk in stdout.splitlines():
-                        lines.append(f"    stdout: {chunk}")
-                else:
-                    lines.append("    stdout: <empty>")
-                if stderr:
-                    for chunk in stderr.splitlines():
-                        lines.append(f"    stderr: {chunk}")
+                stdout = record.stdout.strip() or "<empty>"
+                stderr = record.stderr.strip() or "<empty>"
+                command_table = Table.grid(padding=(0, 1))
+                command_table.add_column(style="bold cyan", width=8)
+                command_table.add_column()
+                command_table.add_row("stdout", stdout)
+                command_table.add_row("stderr", stderr)
+                renderables.append(
+                    Panel(
+                        command_table,
+                        title=f"Command: {record.command}",
+                        border_style="blue",
+                        padding=(1, 2),
+                    )
+                )
         else:
-            lines.append("🔧 No tool execution was required.")
+            renderables.append(
+                Panel(
+                    Text("No tool execution was required."),
+                    title="Commands",
+                    border_style="blue",
+                )
+            )
 
-        return lines
+        return renderables
 
     async def on_focus(self, event: events.Focus) -> None:  # pragma: no cover - UI interaction only
         if event.sender is self:
