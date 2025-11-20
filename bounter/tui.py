@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import asyncio
-import shlex
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
@@ -267,13 +266,13 @@ class BounterTUI(App):
             self._log("A scan is already running. Please wait.")
             return
 
-        parts = shlex.split(command)
-        if len(parts) < 2:
+        segments = command.split(maxsplit=2)
+        if len(segments) < 2:
             self._log("Usage: /run <target> [description]")
             return
 
-        target = parts[1]
-        description = " ".join(parts[2:]) if len(parts) > 2 else ""
+        target = segments[1]
+        description = segments[2] if len(segments) == 3 else ""
 
         self._session_target = target
         self._session_description = description
