@@ -5,6 +5,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 from textwrap import dedent
+from typing import Any
 
 from textual import events
 from textual.app import App, ComposeResult
@@ -382,7 +383,12 @@ class BounterTUI(App):
     def _execute_scan(self, target: str, description: str, instruction_label: str):
         config = BounterConfig.from_env()
         report = ScanReport(target=target, description=description)
-        agent = BounterAgent(config=config, report=report, verbose=False)
+        agent = BounterAgent(
+            config=config,
+            report=report,
+            verbose=False,
+            on_tool_event=self._handle_tool_event,
+        )
         response = agent.run(target=target, description=description)
         transcript = self._build_transcript(instruction_label, report)
         return response, report, transcript
@@ -418,6 +424,50 @@ class BounterTUI(App):
         else:
             renderable = message
         self.log_view.write(renderable)
+
+    def _handle_tool_event(self, payload: dict[str, Any]) -> None:
+        """Receive tool execution payloads from background threads."""
+
+        payload_copy = dict(payload)
+        try:
+            self.call_from_thread(self._render_tool_event, payload_copy)
+        except RuntimeError:
+            # App is shutting down; drop the update.
+            return
+
+    def _render_tool_event(self, payload: dict[str, Any]) -> None:
+        """Render a tool event within the console log."""
+
+        self._ensure_output_visible()
+        if not getattr(self, "_intro_hidden", False):
+            self._hide_intro_panels()
+
+        tool_name = payload.get("tool_name") or "tool"
+        command = payload.get("command_executed") or payload.get("command") or "<unknown>"
+        success = bool(payload.get("success"))
+        stdout = (payload.get("stdout") or "").strip()
+        stderr = (payload.get("stderr") or "").strip()
+        status = "success" if success else "failure"
+        error = payload.get("error")
+        if error:
+            status = f"{status} ({error})"
+
+        table = Table.grid(padding=(0, 1))
+        table.add_column(style="bold #f8e9b0", width=9)
+        table.add_column()
+        table.add_row("command", command)
+        table.add_row("status", status)
+        table.add_row("stdout", stdout or "<empty>")
+        if stderr:
+            table.add_row("stderr", stderr)
+
+        panel = Panel(
+            table,
+            title=f"tool → {tool_name} → {command}",
+            border_style="green" if success else "red",
+            padding=(1, 2),
+        )
+        self._log(panel)
 
     def _ensure_output_visible(self) -> None:
         if not getattr(self, "_output_visible", False):

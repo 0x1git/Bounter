@@ -5,3 +5,4 @@ __pycache__/
 .github/instructions/snyk_rules.instructions.md
 
 bounter/__pycache__/
+bounter/tests/__pycache__/

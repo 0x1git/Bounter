@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, List, Optional
+from typing import Any, List, Optional, Sequence
 
 
 @dataclass
@@ -58,14 +58,14 @@ class ScanReport:
             return
 
         final_chunks: List[str] = []
-        for part in getattr(candidate.content, "parts", []) or []:
-            text = getattr(part, "text", "")
-            if not text:
-                continue
-            if getattr(part, "thought", False):
-                self.thinking_summary.append(text)
-            else:
-                final_chunks.append(text)
+        parts = getattr(candidate.content, "parts", []) or []
+        for part in parts:
+            is_thought, source = self._resolve_thought_source(part)
+            target = self.thinking_summary if is_thought else final_chunks
+            for chunk in self._extract_text_segments(source):
+                trimmed = chunk.strip()
+                if trimmed:
+                    target.append(trimmed)
 
         if final_chunks:
             self.final_analysis = "\n".join(final_chunks)
@@ -75,6 +75,70 @@ class ScanReport:
             self.thinking_tokens = getattr(usage, "thoughts_token_count", None)
             self.output_tokens = getattr(usage, "candidates_token_count", None)
             self.total_tokens = getattr(usage, "total_token_count", None)
+
+    def _resolve_thought_source(self, part: Any) -> tuple[bool, Any]:
+        """Determine if a part represents a thought and return the source to parse."""
+
+        marker = getattr(part, "thought", None)
+        if isinstance(marker, bool):
+            return marker, part
+        if marker not in (None, False):
+            return True, marker
+
+        role = getattr(part, "role", None)
+        if isinstance(role, str) and role.lower() == "thought":
+            return True, part
+
+        kind = getattr(part, "kind_", None)
+        if isinstance(kind, str) and "thought" in kind.lower():
+            return True, part
+
+        return False, part
+
+    def _extract_text_segments(self, node: Any, depth: int = 0) -> list[str]:
+        """Recursively pull text segments from arbitrary response structures."""
+
+        if node is None or depth > 5:
+            return []
+
+        segments: list[str] = []
+
+        if isinstance(node, str):
+            return [node]
+
+        if isinstance(node, Sequence) and not isinstance(node, (str, bytes)):
+            for item in node:
+                segments.extend(self._extract_text_segments(item, depth + 1))
+            return segments
+
+        text_attr = getattr(node, "text", None)
+        if text_attr:
+            segments.extend(self._extract_text_segments(text_attr, depth + 1))
+
+        parts_attr = getattr(node, "parts", None)
+        if parts_attr:
+            segments.extend(self._extract_text_segments(parts_attr, depth + 1))
+
+        if hasattr(node, "model_dump"):
+            try:
+                dumped = node.model_dump()
+            except Exception:  # pragma: no cover - defensive
+                dumped = None
+        elif hasattr(node, "to_dict"):
+            try:
+                dumped = node.to_dict()
+            except Exception:  # pragma: no cover - defensive
+                dumped = None
+        else:
+            dumped = None
+
+        if isinstance(dumped, dict):
+            if "text" in dumped:
+                segments.extend(self._extract_text_segments(dumped["text"], depth + 1))
+            if "parts" in dumped:
+                segments.extend(self._extract_text_segments(dumped["parts"], depth + 1))
+
+        return segments
 
     def _as_serializable(self) -> dict[str, Any]:
         """Return a JSON-serializable representation of the report."""

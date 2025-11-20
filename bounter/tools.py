@@ -1,16 +1,21 @@
 """Tool factory functions used by the Gemini agent."""
 
 import subprocess
-from typing import Any, Callable, TYPE_CHECKING
+from typing import Any, Callable, TYPE_CHECKING, Optional
 
 if TYPE_CHECKING:  # pragma: no cover - runtime import avoided
     from .reporting import ScanReport
 
 
 def build_system_command_tool(
-    report: "ScanReport", timeout: int = 30, verbose: bool = False
+    report: "ScanReport",
+    timeout: int = 30,
+    verbose: bool = False,
+    on_command: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> Callable[[str], dict[str, Any]]:
     """Return a callable that executes system commands and logs results."""
+
+    tool_name = "build_system_command_tool"
 
     def execute_system_command_impl(command: str) -> dict[str, Any]:
         # Show real-time execution feedback
@@ -41,8 +46,11 @@ def build_system_command_tool(
                 "command_executed": command,
                 "return_code": result.returncode,
                 "success": True,
+                "tool_name": tool_name,
             }
             report.log_command(payload)
+            if on_command:
+                on_command(payload)
             return payload
         except subprocess.CalledProcessError as exc:
             stdout = exc.stdout.strip() if exc.stdout else ""
@@ -59,8 +67,11 @@ def build_system_command_tool(
                 "return_code": exc.returncode,
                 "error": str(exc),
                 "success": False,
+                "tool_name": tool_name,
             }
             report.log_command(payload)
+            if on_command:
+                on_command(payload)
             return payload
         except subprocess.TimeoutExpired:
             print(f" COMMAND TIMED OUT after {timeout} seconds")
@@ -71,8 +82,11 @@ def build_system_command_tool(
                 "command_executed": command,
                 "error": "Timeout",
                 "success": False,
+                "tool_name": tool_name,
             }
             report.log_command(payload)
+            if on_command:
+                on_command(payload)
             return payload
 
     return execute_system_command_impl

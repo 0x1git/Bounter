@@ -1,7 +1,7 @@
 """Core Gemini agent orchestration."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Any, Callable, Optional
 
 from google import genai
 
@@ -19,11 +19,13 @@ class BounterAgent:
         report: ScanReport,
         client: Optional[genai.Client] = None,
         verbose: bool = False,
+        on_tool_event: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> None:
         self.config = config
         self.report = report
         self.client = client or genai.Client()
         self.verbose = verbose
+        self.on_tool_event = on_tool_event
 
     RATE_LIMIT_KEYWORDS = (
         "rate limit",
@@ -100,7 +102,10 @@ class BounterAgent:
                     prompt = prompt + "\n\nCONTEXT:\n" + "\n".join(context_lines)
 
             tool_fn = build_system_command_tool(
-                report=self.report, timeout=self.config.command_timeout
+                report=self.report,
+                timeout=self.config.command_timeout,
+                verbose=self.verbose,
+                on_command=self.on_tool_event,
             )
             content_config = self.config.build_content_config(
                 [tool_fn], model_name=model_name
