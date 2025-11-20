@@ -446,7 +446,6 @@ class BounterTUI(App):
         command = payload.get("command_executed") or payload.get("command") or "<unknown>"
         success = bool(payload.get("success"))
         stdout = (payload.get("stdout") or "").strip()
-        stderr = (payload.get("stderr") or "").strip()
         status = "success" if success else "failure"
         error = payload.get("error")
         if error:
@@ -455,15 +454,13 @@ class BounterTUI(App):
         table = Table.grid(padding=(0, 1))
         table.add_column(style="bold #f8e9b0", width=9)
         table.add_column()
-        table.add_row("command", command)
-        table.add_row("status", status)
-        table.add_row("stdout", stdout or "<empty>")
-        if stderr:
-            table.add_row("stderr", stderr)
+        table.add_row("command →", command)
+        #table.add_row("status →", status)
+        table.add_row("", stdout or "<empty>")
 
         panel = Panel(
             table,
-            title=f"tool → {tool_name} → {command}",
+            title=f"tool → {tool_name}",
             border_style="green" if success else "red",
             padding=(1, 2),
         )
