@@ -30,9 +30,26 @@ BANNER_ART = dedent(
 """
 ).rstrip()
 
-COMMANDS_TEXT = """/about     - System information\n/theme     - Change appearance\n/help      - Show help\n/run       - Run scan: /run <target> [description]\n/hil on|off - Toggle human-in-loop\n/guidance  - Provide manual input\n/clear     - Clear console\n/exit      - Exit application"""
+COMMANDS_TEXT_RAW = """/about     - System information\n/theme     - Change appearance\n/help      - Show help\n/run       - Run scan: /run <target> [description]\n/hil on|off - Toggle human-in-loop\n/guidance  - Provide manual input\n/clear     - Clear console\n/exit      - Exit application"""
 
-SHORTCUTS_TEXT = """! shell - (reserved)\nc/y     - Copy selection (focus log)\nEsc     - Clear input\nCtrl+c  - Cancel/Exit\nCtrl+u  - Clear line\nCtrl+a  - Move cursor to start\nCtrl+e  - Move cursor to end"""
+SHORTCUTS_TEXT_RAW = """! shell - (reserved)\nc/y     - Copy selection (focus log)\nEsc     - Clear input\nCtrl+c  - Cancel/Exit\nCtrl+u  - Clear line\nCtrl+a  - Move cursor to start\nCtrl+e  - Move cursor to end"""
+
+
+def _pad_help_text(text: str, target_rows: int) -> str:
+    """Pad help text so both panels render with the same height."""
+
+    lines = text.splitlines()
+    padding_needed = target_rows - len(lines)
+    if padding_needed > 0:
+        lines.extend(["" for _ in range(padding_needed)])
+    return "\n".join(lines)
+
+
+HELP_PANEL_ROWS = max(
+    len(COMMANDS_TEXT_RAW.splitlines()), len(SHORTCUTS_TEXT_RAW.splitlines())
+)
+COMMANDS_TEXT = _pad_help_text(COMMANDS_TEXT_RAW, HELP_PANEL_ROWS)
+SHORTCUTS_TEXT = _pad_help_text(SHORTCUTS_TEXT_RAW, HELP_PANEL_ROWS)
 
 
 class Banner(Static):
@@ -345,7 +362,8 @@ class BounterTUI(App):
         return str(json_path), str(md_path)
 
     def _log(self, message: str) -> None:
-        self.log_view.write(message)
+        text = message if message.endswith("\n") else f"{message}\n"
+        self.log_view.write(text)
 
     def _ensure_output_visible(self) -> None:
         if not getattr(self, "_output_visible", False):
