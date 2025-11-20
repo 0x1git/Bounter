@@ -42,8 +42,8 @@ class BounterConfig:
     # Preferred model order to try when rate limits occur. The agent will
     # attempt these in order and move to the next one if a rate-limit is hit.
     models_order: Sequence[str] = (
-        "gemini-2.5-flash-lite",
         "gemini-2.5-flash",
+        "gemini-2.5-flash-lite",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
     )
