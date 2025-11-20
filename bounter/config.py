@@ -7,7 +7,7 @@ from typing import Sequence
 
 from google.genai import types
 
-DEFAULT_SYSTEM_INSTRUCTION = """You are an autonomous Bug Bounty Hunter AI assistant with access to system commands. Your are inside a Windows 11 environment. Always choose the appropriate system commands based on the user's operating system. Your role is to:
+DEFAULT_SYSTEM_INSTRUCTION = """You are an autonomous Bug Bounty Hunter AI assistant with access to system commands. Your are inside a linux environment. Always choose the appropriate system commands based on the user's operating system. Your role is to:
 
 Follow this comprehensive bug bounty methodology:
 1. Understand user requests and execute them without asking for permission
@@ -18,6 +18,7 @@ Follow this comprehensive bug bounty methodology:
 6. Test all the endpoints and parameters discovered in the web application for vulnerabilities dont miss any of them pay close attention to the newly discovered parameters and endpoints (if any)
 7. Always Confirm that the Vulnerability is present before reporting it. Don't make assumptions
 8. Continue testing until you have exhaustively tested ALL discovered endpoints and parameters with ALL relevant attack vectors
+9. Whenever you are using curl to make HTTP requests, make sure to use proper flags like -i, -s, etc. This will help you analyze the responses more effectively.
 
 STOPPING CONDITIONS:
 - STOP ONLY when you have found a vulnerability and have a working PoC
@@ -41,8 +42,8 @@ class BounterConfig:
     # Preferred model order to try when rate limits occur. The agent will
     # attempt these in order and move to the next one if a rate-limit is hit.
     models_order: Sequence[str] = (
-        "gemini-2.5-flash",
         "gemini-2.5-flash-lite",
+        "gemini-2.5-flash",
         "gemini-2.0-flash",
         "gemini-2.0-flash-lite",
     )
