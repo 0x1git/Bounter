@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 from datetime import datetime
+import json
 from pathlib import Path
 from textwrap import dedent
 from typing import Any
@@ -15,11 +16,13 @@ from textual.reactive import reactive
 from textual.widgets import Footer, Header, Input, Static, RichLog
 
 from rich import box
-from rich.console import RenderableType
+from rich.console import RenderableType, Group
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich.pretty import Pretty
+from rich.syntax import Syntax
 
 from bounter.agent import BounterAgent
 from bounter.config import BounterConfig
@@ -333,11 +336,9 @@ class BounterTUI(App):
 
     async def _run_scan(self, target: str, description: str, instruction_label: str) -> None:
         try:
-            response, report, transcript_lines = await asyncio.to_thread(
+            response, report = await asyncio.to_thread(
                 self._execute_scan, target, description, instruction_label
             )
-            for line in transcript_lines:
-                self._log(line)
 
             if response is not None:
                 self._emit_response_summary(report)
@@ -390,8 +391,7 @@ class BounterTUI(App):
             on_tool_event=self._handle_tool_event,
         )
         response = agent.run(target=target, description=description)
-        transcript = self._build_transcript(instruction_label, report)
-        return response, report, transcript
+        return response, report
 
     def _persist_report(self, report: ScanReport) -> tuple[str, str]:
         report_dir = Path("reports")
@@ -411,19 +411,37 @@ class BounterTUI(App):
         style: str | None = None,
         markup: bool = True,
     ) -> None:
-        if isinstance(message, str):
-            renderable = (
-                Text.from_markup(message)
-                if markup
-                else Text(message)
-            )
+        if isinstance(message, (dict, list, tuple, set)):
+            renderable = Pretty(message, expand_all=True)
+        elif isinstance(message, str):
+            renderable = self._format_text_block(message, markup=markup)
             if style:
                 renderable.stylize(style)
-            if not message.endswith("\n"):
-                renderable.append("\n")
         else:
             renderable = message
         self.log_view.write(renderable)
+
+    def _format_text_block(self, text: str, *, markup: bool = True) -> Text | Syntax:
+        stripped = text.strip()
+        if not stripped:
+            return Text("<empty>", style="dim")
+
+        if stripped.startswith(("{", "[")):
+            try:
+                parsed = json.loads(stripped)
+            except json.JSONDecodeError:
+                pass
+            else:
+                pretty = json.dumps(parsed, indent=2, sort_keys=True)
+                return Syntax(pretty, "json", word_wrap=True)
+
+        if stripped.startswith("GET ") or " HTTP/" in stripped:
+            return Syntax(stripped, "http", word_wrap=True)
+
+        if any(keyword in stripped for keyword in ("#!/bin", " && ", " || ", " | ")) or "\n" in stripped:
+            return Syntax(stripped, "bash", word_wrap=True)
+
+        return Text.from_markup(text) if markup else Text(text)
 
     def _handle_tool_event(self, payload: dict[str, Any]) -> None:
         """Receive tool execution payloads from background threads."""
@@ -455,16 +473,39 @@ class BounterTUI(App):
         table.add_column(style="bold #f8e9b0", width=9)
         table.add_column()
         table.add_row("command →", command)
-        #table.add_row("status →", status)
-        table.add_row("", stdout or "<empty>")
+        table.add_row("status →", status)
 
-        panel = Panel(
+        base_panel = Panel(
             table,
             title=f"tool → {tool_name}",
             border_style="green" if success else "red",
             padding=(1, 2),
         )
-        self._log(panel)
+
+        blocks: list[RenderableType] = [base_panel]
+        stdout_renderable = self._format_text_block((payload.get("stdout") or ""), markup=False)
+        blocks.append(
+            Panel(
+                stdout_renderable,
+                title="stdout",
+                border_style="cyan",
+                padding=(1, 2),
+            )
+        )
+
+        stderr_raw = payload.get("stderr") or ""
+        if stderr_raw.strip():
+            stderr_renderable = self._format_text_block(stderr_raw, markup=False)
+            blocks.append(
+                Panel(
+                    stderr_renderable,
+                    title="stderr",
+                    border_style="bright_red",
+                    padding=(1, 2),
+                )
+            )
+
+        self._log(Group(*blocks))
 
     def _ensure_output_visible(self) -> None:
         if not getattr(self, "_output_visible", False):
@@ -525,72 +566,6 @@ class BounterTUI(App):
                 f"Operator guidance {len(self._guidance_history) + 1}: {extra_instruction}"
             )
         return "\n".join(parts).strip()
-
-    def _build_transcript(
-        self, instruction: str, report: ScanReport
-    ) -> list[RenderableType]:
-        renderables: list[RenderableType] = []
-        display_instruction = instruction.strip() or "Investigate the target"
-        renderables.append(
-            Panel(
-                Text(display_instruction, style="bold white"),
-                title="Instruction",
-                border_style="yellow",
-                padding=(1, 2),
-            )
-        )
-
-        if report.thinking_summary:
-            for idx, thought in enumerate(report.thinking_summary, start=1):
-                thought_body = thought.strip()
-                if thought_body:
-                    thought_renderable: RenderableType = Markdown(thought_body)
-                else:
-                    thought_renderable = Text("<empty>")
-                renderables.append(
-                    Panel(
-                        thought_renderable,
-                        title=f"Thought #{idx}",
-                        border_style="magenta",
-                        padding=(1, 2),
-                    )
-                )
-        else:
-            renderables.append(
-                Panel(
-                    Text("Model did not share its reasoning."),
-                    title="Thoughts",
-                    border_style="magenta",
-                )
-            )
-
-        if report.commands:
-            for record in report.commands:
-                stdout = record.stdout.strip() or "<empty>"
-                stderr = record.stderr.strip() or "<empty>"
-                command_table = Table.grid(padding=(0, 1))
-                command_table.add_column(style="bold cyan", width=8)
-                command_table.add_column()
-                command_table.add_row("stdout", stdout)
-                command_table.add_row("stderr", stderr)
-                renderables.append(
-                    Panel(
-                        command_table,
-                        title=f"Command: {record.command}",
-                        border_style="blue",
-                        padding=(1, 2),
-                    )
-                )
-        else:
-            renderables.append(
-                Panel(
-                    Text("No tool execution was required."),
-                    title="Commands",
-                    border_style="blue",
-                )
-            )
-
-        return renderables
 
     async def on_focus(self, event: events.Focus) -> None:  # pragma: no cover - UI interaction only
         if event.sender is self:

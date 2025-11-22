@@ -4,6 +4,9 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 
+from rich.console import Console
+from rich.progress import Progress, SpinnerColumn, TextColumn, TimeElapsedColumn
+
 from bounter.agent import BounterAgent
 from bounter.cli import parse_args
 from bounter.config import BounterConfig
@@ -76,12 +79,27 @@ def main() -> None:
     args = parse_args()
     config = BounterConfig.from_env()
     report = ScanReport(target=args.target, description=args.description)
-    agent = BounterAgent(config=config, report=report, verbose=args.verbose)
+    console = Console()
+    progress = Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        TimeElapsedColumn(),
+        console=console,
+        transient=True,
+    )
 
     print("\nAutonomous Bug Bounty Agent - Real-time Execution:")
     print("=" * 60)
 
-    response = agent.run(target=args.target, description=args.description)
+    with progress:
+        agent = BounterAgent(
+            config=config,
+            report=report,
+            verbose=args.verbose,
+            status_console=console,
+            progress=progress,
+        )
+        response = agent.run(target=args.target, description=args.description)
     _print_model_response(response)
     _print_report(report)
     _persist_report(report, args.report_dir, args.report_prefix)

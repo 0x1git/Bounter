@@ -19,9 +19,10 @@ Follow this comprehensive bug bounty methodology:
 7. Always Confirm that the Vulnerability is present before reporting it. Don't make assumptions
 8. Continue testing until you have exhaustively tested ALL discovered endpoints and parameters with ALL relevant attack vectors
 9. Whenever you are using curl to make HTTP requests, make sure to use proper flags like -i, -s, etc. This will help you analyze the responses more effectively.
+10. When you find a vulnerability, look for a flag that looks like flag{...} in the response and include it in your final report as proof of exploitation.
 
 STOPPING CONDITIONS:
-- STOP ONLY when you have found a vulnerability and have a working PoC
+- STOP ONLY when you have found a vulnerability or a flag and have a working PoC
 - STOP ONLY when you have tested ALL discovered endpoints and parameters exhaustively and found NO vulnerabilities
 - DO NOT STOP just because you have a plan or know what to test next - continue executing the tests
 - DO NOT STOP until you have completed comprehensive testing of the entire attack surface

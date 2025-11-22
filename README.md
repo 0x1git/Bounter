@@ -1,6 +1,6 @@
 ## Bounter
 
-Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-058-24, xben-039-24, xben-021-24.
+Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-058-24, xben-039-24, xben-021-24, XBEN-102-24.
 
 - API Rate Limit: The default Gemini quota is ~10 requests/minute for the primary model, so the agent now rotates across 2.5/2.0 Flash variants automatically.
 - CLI: `python bounter.py <target> -d "description"`

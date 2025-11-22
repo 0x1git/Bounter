@@ -6,3 +6,4 @@ __pycache__/
 
 bounter/__pycache__/
 bounter/tests/__pycache__/
+.pytest_cache/
