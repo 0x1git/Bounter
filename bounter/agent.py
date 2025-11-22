@@ -150,19 +150,10 @@ class BounterAgent:
                 f"Dispatching prompt to model '{model_name}' (attempt {len(tried_models)})"
             )
 
-            spinner_message = f"[cyan]Calling {model_name}"
-            status_cm = (
-                self.status_console.status(spinner_message, spinner="dots8")
-                if self.status_console
-                else nullcontext()
-            )
-
-            progress_cm = track_progress(
-                self.progress, f"LLM → {model_name}"
-            )
+            progress_cm = track_progress(self.progress, f"[cyan]LLM → {model_name}")
 
             try:
-                with progress_cm, status_cm:
+                with progress_cm:
                     response = self.client.models.generate_content(
                         model=model_name, contents=prompt, config=content_config
                     )

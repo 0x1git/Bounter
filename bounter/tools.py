@@ -1,16 +1,58 @@
 """Tool factory functions used by the Gemini agent."""
 
+import json
 import subprocess
+import uuid
 from contextlib import nullcontext
 from typing import Any, Callable, TYPE_CHECKING, Optional
 
 from rich.console import Console
+from rich.panel import Panel
 from rich.progress import Progress
+from rich.syntax import Syntax
+from rich.text import Text
 
 if TYPE_CHECKING:  # pragma: no cover - runtime import avoided
     from .reporting import ScanReport
 
 from .progress_utils import track_progress
+
+
+def _format_stream_content(content: str) -> Text | Syntax:
+    stripped = content.strip()
+    if not stripped:
+        return Text("<empty>", style="dim")
+
+    if stripped.startswith(("{", "[")):
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            pass
+        else:
+            pretty = json.dumps(parsed, indent=2, sort_keys=True)
+            return Syntax(pretty, "json", word_wrap=True)
+
+    if stripped.startswith("GET ") or " HTTP/" in stripped:
+        return Syntax(stripped, "http", word_wrap=True)
+
+    if "\n" in stripped or any(token in stripped for token in (" && ", " || ", " | ", "#!/bin")):
+        return Syntax(stripped, "bash", word_wrap=True)
+
+    return Text(stripped)
+
+
+def _render_stream(console: Console, label: str, content: str, *, border: str) -> None:
+    if content is None:
+        return
+    renderable = _format_stream_content(content)
+    console.print(
+        Panel(
+            renderable,
+            title=label,
+            border_style=border,
+            padding=(1, 2),
+        )
+    )
 
 
 def build_system_command_tool(
@@ -27,8 +69,23 @@ def build_system_command_tool(
 
     def execute_system_command_impl(command: str) -> dict[str, Any]:
         # Show real-time execution feedback
-        print(f"\n🔧 EXECUTING COMMAND: {command}")
-        print("-" * 40)
+        output_console = status_console or Console()
+        output_console.print(
+            Text(f"\ntool → {tool_name}", style="bold cyan\n")
+        )
+        output_console.print(Text(f"❯ {command}", style="bold white"))
+        event_id = uuid.uuid4().hex
+
+        if on_command:
+            on_command(
+                {
+                    "tool_name": tool_name,
+                    "command": command,
+                    "command_executed": command,
+                    "phase": "start",
+                    "event_id": event_id,
+                }
+            )
 
         status_cm = (
             status_console.status(f"[cyan]tool → {command}", spinner="dots8")
@@ -52,10 +109,8 @@ def build_system_command_tool(
 
                 stdout = result.stdout.strip()
                 stderr = result.stderr.strip()
-                if stdout:
-                    print(f"STDOUT:\n{stdout}")
-                print(f" Return Code: {result.returncode}")
-                print("-" * 40)
+                _render_stream(output_console, "STDOUT", stdout, border="green")
+                output_console.print(Text(f"Return Code: {result.returncode}", style="bold white"))
 
                 payload = {
                     "stdout": stdout,
@@ -64,6 +119,8 @@ def build_system_command_tool(
                     "return_code": result.returncode,
                     "success": True,
                     "tool_name": tool_name,
+                    "phase": "end",
+                    "event_id": event_id,
                 }
                 report.log_command(payload)
                 if on_command:
@@ -72,11 +129,12 @@ def build_system_command_tool(
             except subprocess.CalledProcessError as exc:
                 stdout = exc.stdout.strip() if exc.stdout else ""
                 stderr = exc.stderr.strip() if exc.stderr else ""
-                print("❌ COMMAND FAILED:")
-                print(f"Return Code: {exc.returncode}")
+                output_console.print(Text("❌ Command failed", style="bold red"))
+                output_console.print(Text(f"Return Code: {exc.returncode}", style="bold red"))
                 if stdout:
-                    print(f"STDOUT: {stdout}")
-                print("-" * 40)
+                    _render_stream(output_console, "STDOUT", stdout, border="green")
+                if stderr:
+                    _render_stream(output_console, "STDERR", stderr, border="red")
                 payload = {
                     "stdout": stdout,
                     "stderr": stderr,
@@ -85,14 +143,15 @@ def build_system_command_tool(
                     "error": str(exc),
                     "success": False,
                     "tool_name": tool_name,
+                    "phase": "end",
+                    "event_id": event_id,
                 }
                 report.log_command(payload)
                 if on_command:
                     on_command(payload)
                 return payload
             except subprocess.TimeoutExpired:
-                print(f" COMMAND TIMED OUT after {timeout} seconds")
-                print("-" * 40)
+                output_console.print(Text(f"⏱️ Command timed out after {timeout} seconds", style="yellow"))
                 payload = {
                     "stdout": "",
                     "stderr": f"Command timed out after {timeout} seconds",
@@ -100,6 +159,8 @@ def build_system_command_tool(
                     "error": "Timeout",
                     "success": False,
                     "tool_name": tool_name,
+                    "phase": "end",
+                    "event_id": event_id,
                 }
                 report.log_command(payload)
                 if on_command:

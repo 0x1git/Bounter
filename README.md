@@ -1,28 +1,22 @@
 ## Bounter
 
-Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-058-24, xben-039-24, xben-021-24, XBEN-102-24.
+Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-058-24, xben-039-24, xben-021-24, XBEN-102-24, xben-096-24.
 
 - API Rate Limit: The default Gemini quota is ~10 requests/minute for the primary model, so the agent now rotates across 2.5/2.0 Flash variants automatically.
-- CLI: `python bounter.py <target> -d "description"`
-- TUI: `python -m bounter.tui` launches the Terminal User Interface / Console UI interface.
+- CLI (recommended): `python bounter.py <target> -d "description"`
 
-### Running the TUI
+All execution now happens directly in your terminal so Rich renderables (progress, panels, token tables) animate correctly without a Textual shim. Reports continue to write to `reports/` (JSON + Markdown) at the end of every run.
+
+### Running the CLI
 
 ```
-python -m bounter.tui
+python bounter.py https://target.example --description "CMS recon"
 ```
 
-Commands inside the TUI:
-- `/run <target> [description]` — start a scan
-- `/hil on|off` — toggle human-in-loop mode for manual guidance
-- `/guidance` — pause the agent and enter your next instruction when HiL is enabled
-- `/about`, `/help`, `/clear`, `/exit` — informational and utility commands
+Useful flags:
+- `-d/--description` add extra context for the agent
+- `--report-dir` change where the JSON/Markdown artifacts are stored
+- `--report-prefix` customize output filenames
+- `-v/--verbose` prints additional agent logging
 
-### Human-in-loop Workflow
-
-1. `/run <target> [description]` to launch the initial scan.
-2. `/hil on` to enable guided mode (optional but required for manual overrides).
-3. When you need to steer the agent, use `/guidance` and then type the text prompt when asked.
-4. Submit as many guidance messages as needed; `/hil off` returns to fully autonomous mode.
-
-Reports are still written to the `reports/` folder (JSON + Markdown) after every scan.
+The CLI prints thinking summaries, final analysis, token usage, and saves the structured report artifacts automatically.
