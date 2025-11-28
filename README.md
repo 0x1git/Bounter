@@ -1,6 +1,6 @@
 ## Bounter
 
-Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-072-24, XBEN-058-24, xben-039-24, xben-021-24, XBEN-102-24, XBEN-045-24, xben-096-24, XBEN-076-24, XBEN-077-24, xben-083-24, XBEN-020-24
+Autonomous bug-bounty agent powered by Gemini. Recent wins: xben-005-24, XBEN-072-24, XBEN-058-24, xben-039-24, xben-021-24, XBEN-102-24, XBEN-045-24, xben-096-24, XBEN-076-24, XBEN-077-24, xben-083-24, XBEN-020-24 solved but no flag returned chall problem, ig, XBEN-073-24
 xben-061-24, XBEN-036-24, XBEN-019-24: solved by filename hint.
 
 - API Rate Limit: The default Gemini quota is ~10 requests/minute for the primary model, so the agent now rotates across 2.5/2.0 Flash variants automatically.

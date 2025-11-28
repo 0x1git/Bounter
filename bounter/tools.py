@@ -10,10 +10,12 @@ import sys
 import textwrap
 import threading
 import traceback
+import time
 import uuid
 from contextlib import nullcontext, redirect_stderr, redirect_stdout
 from datetime import datetime
 from pathlib import Path
+from functools import wraps
 from typing import Any, Callable, TYPE_CHECKING, Optional
 
 from rich.console import Console
@@ -63,6 +65,43 @@ def _render_stream(console: Console, label: str, content: str, *, border: str) -
     )
 
 
+def _format_tool_result(payload: Any) -> str:
+    try:
+        return json.dumps(payload, indent=2, sort_keys=True, default=str)
+    except Exception:
+        return repr(payload)
+
+
+def _display_tool_result(console: Optional[Console], tool_name: str, payload: Any) -> None:
+    if payload is None:
+        return
+    target_console = console or Console()
+    text = _format_tool_result(payload)
+    target_console.print(
+        Panel(
+            Syntax(text, "json", word_wrap=True),
+            title=f"{tool_name} result",
+            border_style="magenta",
+            padding=(1, 2),
+        )
+    )
+
+
+def _wrap_tool_callable(
+    func: Callable[..., dict[str, Any]],
+    *,
+    console: Optional[Console],
+    tool_name: str,
+) -> Callable[..., dict[str, Any]]:
+    @wraps(func)
+    def wrapper(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        result = func(*args, **kwargs)
+        _display_tool_result(console, tool_name, result)
+        return result
+
+    return wrapper
+
+
 def build_system_command_tool(
     report: "ScanReport",
     timeout: int = 30,
@@ -74,10 +113,10 @@ def build_system_command_tool(
     """Return a callable that executes system commands and logs results."""
 
     tool_name = "build_system_command_tool"
+    output_console = status_console or Console()
 
     def execute_system_command_impl(command: str) -> dict[str, Any]:
         # Show real-time execution feedback
-        output_console = status_console or Console()
         output_console.print(
             Text(f"\ntool → {tool_name}", style="bold cyan\n")
         )
@@ -122,7 +161,6 @@ def build_system_command_tool(
 
                 payload = {
                     "stdout": stdout,
-                    "stderr": stderr,
                     "command_executed": command,
                     "return_code": result.returncode,
                     "success": True,
@@ -144,7 +182,6 @@ def build_system_command_tool(
                 # STDERR suppressed per user preference
                 payload = {
                     "stdout": stdout,
-                    "stderr": stderr,
                     "command_executed": command,
                     "return_code": exc.returncode,
                     "error": str(exc),
@@ -161,9 +198,8 @@ def build_system_command_tool(
                 output_console.print(Text(f"⏱️ Command timed out after {timeout} seconds", style="yellow"))
                 payload = {
                     "stdout": "",
-                    "stderr": f"Command timed out after {timeout} seconds",
                     "command_executed": command,
-                    "error": "Timeout",
+                    "error": f"Command timed out after {timeout} seconds",
                     "success": False,
                     "tool_name": tool_name,
                     "phase": "end",
@@ -174,7 +210,11 @@ def build_system_command_tool(
                     on_command(payload)
                 return payload
 
-    return execute_system_command_impl
+    return _wrap_tool_callable(
+        execute_system_command_impl,
+        console=output_console,
+        tool_name=tool_name,
+    )
 
 
 def build_searchsploit_tool(
@@ -241,12 +281,13 @@ def build_searchsploit_tool(
             "tool_name": tool_name,
             "command_executed": command_str,
             "stdout": result.stdout.strip(),
-            "stderr": result.stderr.strip(),
             "return_code": result.returncode,
             "success": success,
             "phase": "end",
             "event_id": event_id,
         }
+        if not success and result.stderr:
+            payload["error"] = result.stderr.strip()
         _log_event(payload)
 
         header = f"{label.upper()} {'OK' if success else 'FAILED'}"
@@ -394,7 +435,249 @@ def build_searchsploit_tool(
             "Unsupported action. Use 'search' or 'mirror' for the searchsploit tool."
         )
 
-    return searchsploit_lookup
+    return _wrap_tool_callable(
+        searchsploit_lookup,
+        console=output_console,
+        tool_name=tool_name,
+    )
+
+
+def build_interactsh_tool(
+    report: "ScanReport",
+    *,
+    verbose: bool = False,
+    on_command: Optional[Callable[[dict[str, Any]], None]] = None,
+    status_console: Optional[Console] = None,
+    progress: Optional[Progress] = None,
+) -> Callable[..., dict[str, Any]]:
+    """Return a callable that manages interactsh-client for OOB testing."""
+
+    tool_name = "interactsh_client"
+    output_console = status_console or Console()
+    sessions: dict[str, dict[str, Any]] = {}
+    MAX_BUFFERED_EVENTS = 200
+
+    def _log(payload: dict[str, Any]) -> None:
+        report.log_command(payload)
+        if on_command:
+            on_command(payload)
+
+    def _reader(process: subprocess.Popen, session: dict[str, Any]) -> None:
+        stdout = process.stdout
+        if stdout is None:
+            return
+        for line in iter(stdout.readline, ""):
+            if not line:
+                break
+            stripped = line.strip()
+            if not stripped:
+                continue
+            try:
+                data = json.loads(stripped)
+            except json.JSONDecodeError:
+                session["logs"].append(stripped)
+                continue
+            entry_type = data.get("type")
+            if entry_type == "registration":
+                session["payload"] = data.get("payload") or data.get("full-id")
+            session["events"].append(data)
+            if len(session["events"]) > MAX_BUFFERED_EVENTS:
+                session["events"] = session["events"][-MAX_BUFFERED_EVENTS:]
+        stdout.close()
+
+    def _stderr_reader(process: subprocess.Popen, session: dict[str, Any]) -> None:
+        stderr = process.stderr
+        if stderr is None:
+            return
+        for line in iter(stderr.readline, ""):
+            if not line:
+                break
+            session["errors"].append(line.strip())
+        stderr.close()
+
+    def _ensure_session(session_id: str) -> dict[str, Any]:
+        session = sessions.get(session_id)
+        if not session:
+            raise ValueError(f"No interactsh session found for '{session_id}'")
+        return session
+
+    def interactsh_client(
+        action: str = "start",
+        *,
+        session_id: str = "default",
+        server: Optional[str] = None,
+        auth_token: Optional[str] = None,
+        extra_args: Optional[list[str]] = None,
+        timeout: int = 5,
+    ) -> dict[str, Any]:
+        action_normalized = (action or "start").strip().lower()
+        if action_normalized not in {"start", "status", "poll", "stop", "payload"}:
+            raise ValueError("Unsupported action. Use start, status, poll, payload, or stop.")
+
+        output_console.print(Text(f"\ntool → {tool_name}", style="bold cyan"))
+        output_console.print(Text(f"action: {action_normalized} session={session_id}", style="bold white"))
+
+        if action_normalized == "start":
+            if session_id in sessions and sessions[session_id].get("process") and sessions[session_id]["process"].poll() is None:
+                raise RuntimeError(f"interactsh session '{session_id}' already running")
+
+            command = ["interactsh-client", "-json"]
+            if server:
+                command.extend(["-server", server])
+            if auth_token:
+                command.extend(["-authorization", auth_token])
+            if extra_args:
+                command.extend(extra_args)
+
+            event_id = uuid.uuid4().hex
+            if on_command:
+                on_command(
+                    {
+                        "tool_name": tool_name,
+                        "command": " ".join(command),
+                        "command_executed": "start",
+                        "phase": "start",
+                        "event_id": event_id,
+                    }
+                )
+
+            status_cm = (
+                status_console.status(f"[cyan]{tool_name} starting", spinner="dots8")
+                if status_console
+                else nullcontext()
+            )
+            progress_cm = track_progress(progress, f"{tool_name} → start")
+
+            try:
+                with status_cm, progress_cm:
+                    process = subprocess.Popen(
+                        command,
+                        stdout=subprocess.PIPE,
+                        stderr=subprocess.PIPE,
+                        text=True,
+                        bufsize=1,
+                        universal_newlines=True,
+                    )
+            except FileNotFoundError as exc:
+                payload = {
+                    "tool_name": tool_name,
+                    "command_executed": "start",
+                    "stdout": "",
+                    "return_code": 1,
+                    "success": False,
+                    "event_id": event_id,
+                    "error": "interactsh-client binary not found",
+                    "details": str(exc),
+                }
+                _log(payload)
+                return payload
+
+            session = {
+                "process": process,
+                "events": [],
+                "logs": [],
+                "errors": [],
+                "payload": None,
+            }
+            sessions[session_id] = session
+
+            stdout_thread = threading.Thread(
+                target=_reader,
+                args=(process, session),
+                daemon=True,
+            )
+            stderr_thread = threading.Thread(
+                target=_stderr_reader,
+                args=(process, session),
+                daemon=True,
+            )
+            stdout_thread.start()
+            stderr_thread.start()
+
+            waited = 0
+            while session["payload"] is None and waited < max(1, timeout):
+                time.sleep(0.5)
+                waited += 0.5
+
+            payload = {
+                "tool_name": tool_name,
+                "command_executed": "start",
+                "stdout": "",
+                "return_code": 0,
+                "success": True,
+                "event_id": event_id,
+                "session_id": session_id,
+                "payload_identifier": session["payload"],
+            }
+            _log(payload)
+            return {
+                "success": True,
+                "session_id": session_id,
+                "payload": session["payload"],
+                "message": "interactsh-client session started",
+            }
+
+        session = _ensure_session(session_id)
+        process: subprocess.Popen = session["process"]
+
+        if action_normalized == "status":
+            running = process.poll() is None
+            return {
+                "success": True,
+                "session_id": session_id,
+                "running": running,
+                "payload": session.get("payload"),
+            }
+
+        if action_normalized == "payload":
+            return {
+                "success": True,
+                "session_id": session_id,
+                "payload": session.get("payload"),
+            }
+
+        if action_normalized == "poll":
+            events = session["events"]
+            session["events"] = []
+            errors = session["errors"]
+            session["errors"] = []
+            logs = session["logs"]
+            session["logs"] = []
+            return {
+                "success": True,
+                "session_id": session_id,
+                "payload": session.get("payload"),
+                "events": events,
+                "errors": errors,
+                "logs": logs,
+            }
+
+        # stop
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+        leftover_events = session["events"]
+        leftover_errors = session["errors"]
+        leftover_logs = session["logs"]
+        sessions.pop(session_id, None)
+        return {
+            "success": True,
+            "session_id": session_id,
+            "payload": session.get("payload"),
+            "events": leftover_events,
+            "errors": leftover_errors,
+            "logs": leftover_logs,
+            "message": "interactsh-client session stopped",
+        }
+
+    return _wrap_tool_callable(
+        interactsh_client,
+        console=output_console,
+        tool_name=tool_name,
+    )
 
 
 def build_listener_tool(
@@ -522,11 +805,11 @@ def build_listener_tool(
                     "tool_name": tool_name,
                     "command_executed": " ".join(command),
                     "stdout": "",
-                    "stderr": str(exc),
                     "return_code": 1,
                     "success": False,
                     "event_id": event_id,
                     "error": "nc binary not found",
+                    "details": str(exc),
                 }
                 _log(payload)
                 return payload
@@ -550,7 +833,7 @@ def build_listener_tool(
             session = {
                 "process": process,
                 "stdout": stdout_buf,
-                "stderr": stderr_buf,
+                "stderr_buffer": stderr_buf,
                 "lock": lock,
                 "started_at": datetime.utcnow().isoformat(),
                 "stdout_thread": stdout_thread,
@@ -562,7 +845,6 @@ def build_listener_tool(
                 "tool_name": tool_name,
                 "command_executed": command_label,
                 "stdout": "",
-                "stderr": "",
                 "return_code": 0,
                 "success": True,
                 "event_id": event_id,
@@ -601,7 +883,6 @@ def build_listener_tool(
                 "tool_name": tool_name,
                 "command_executed": command_label,
                 "stdout": "",
-                "stderr": "",
                 "return_code": process.returncode,
                 "success": True,
                 "details": payload,
@@ -629,7 +910,6 @@ def build_listener_tool(
                     "tool_name": tool_name,
                     "command_executed": command_label,
                     "stdout": "",
-                    "stderr": "",
                     "return_code": 0,
                     "success": True,
                     "details": payload,
@@ -639,14 +919,13 @@ def build_listener_tool(
 
         if action_normalized == "read":
             stdout_text = _drain_buffer(session, "stdout", drain=drain_output)
-            stderr_text = _drain_buffer(session, "stderr", drain=drain_output)
+            _drain_buffer(session, "stderr_buffer", drain=drain_output)
             _emit("LISTENER STDOUT", stdout_text, border="green")
             payload = {
                 "success": True,
                 "action": "read",
                 "port": port_key,
                 "stdout": stdout_text,
-                "stderr": stderr_text,
                 "drained": drain_output,
             }
             _log(
@@ -654,7 +933,6 @@ def build_listener_tool(
                     "tool_name": tool_name,
                     "command_executed": command_label,
                     "stdout": stdout_text,
-                    "stderr": stderr_text,
                     "return_code": 0,
                     "success": True,
                 }
@@ -670,7 +948,7 @@ def build_listener_tool(
                 process.kill()
         listeners.pop(port_key, None)
         stdout = _drain_buffer(session, "stdout", drain=True)
-        stderr = _drain_buffer(session, "stderr", drain=True)
+        _drain_buffer(session, "stderr_buffer", drain=True)
         _emit("LISTENER STDOUT", stdout, border="green")
         command_label = _command_label("stop", port_key)
         payload = {
@@ -679,14 +957,17 @@ def build_listener_tool(
             "port": port_key,
             "return_code": process.returncode,
             "stdout": stdout,
-            "stderr": stderr,
             "tool_name": tool_name,
             "command_executed": command_label,
         }
         _log(payload)
         return payload
 
-    return start_listener
+    return _wrap_tool_callable(
+        start_listener,
+        console=output_console,
+        tool_name=tool_name,
+    )
 
 
 def build_python_executor_tool(
@@ -721,17 +1002,17 @@ def build_python_executor_tool(
         for package in packages:
             cmd = [sys.executable, "-m", "pip", "install", package]
             proc = subprocess.run(cmd, capture_output=True, text=True)
+            stderr_output = proc.stderr.strip()
             installs.append(
                 {
                     "package": package,
                     "return_code": proc.returncode,
                     "stdout": proc.stdout.strip(),
-                    "stderr": proc.stderr.strip(),
                 }
             )
             if proc.returncode != 0:
                 raise RuntimeError(
-                    f"pip install failed for '{package}': {proc.stderr.strip()}"
+                    f"pip install failed for '{package}': {stderr_output}"
                 )
         return installs
 
@@ -776,7 +1057,6 @@ def build_python_executor_tool(
                     "tool_name": tool_name,
                     "command_executed": f"pip install {requirements}",
                     "stdout": "",
-                    "stderr": str(exc),
                     "return_code": 1,
                     "success": False,
                     "session_id": sid,
@@ -838,7 +1118,7 @@ def build_python_executor_tool(
             {
                 "code": normalized_code,
                 "stdout": stdout_text,
-                "stderr": stderr_text,
+                "stderr_output": stderr_text,
                 "error": error_trace,
                 "result_preview": repr(eval_result)[:500],
             }
@@ -854,7 +1134,6 @@ def build_python_executor_tool(
             "tool_name": tool_name,
             "command_executed": normalized_code,
             "stdout": stdout_text,
-            "stderr": stderr_text,
             "return_code": 0 if error_trace is None else 1,
             "success": error_trace is None,
             "session_id": sid,
@@ -872,6 +1151,10 @@ def build_python_executor_tool(
 
         return payload
 
-    return python_code_executor
+    return _wrap_tool_callable(
+        python_code_executor,
+        console=output_console,
+        tool_name=tool_name,
+    )
 
 

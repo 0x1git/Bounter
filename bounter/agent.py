@@ -19,6 +19,7 @@ from .tools import (
     build_python_executor_tool,
     build_searchsploit_tool,
     build_system_command_tool,
+    build_interactsh_tool,
 )
 from .progress_utils import track_progress
 
@@ -333,6 +334,13 @@ class BounterAgent:
                     status_console=self.status_console,
                     progress=self.progress,
                 )
+                interactsh_tool = build_interactsh_tool(
+                    report=self.report,
+                    verbose=self.verbose,
+                    on_command=self.on_tool_event,
+                    status_console=self.status_console,
+                    progress=self.progress,
+                )
                 python_tool = build_python_executor_tool(
                     report=self.report,
                     verbose=self.verbose,
@@ -347,7 +355,7 @@ class BounterAgent:
                     status_console=self.status_console,
                     progress=self.progress,
                 )
-                tools = [system_tool, search_tool, python_tool, listener_tool]
+                tools = [system_tool, search_tool, interactsh_tool, python_tool, listener_tool]
 
                 content_config = self.config.build_content_config(tools, model_name=model_name)
 
