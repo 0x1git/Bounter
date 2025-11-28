@@ -10,13 +10,14 @@ from typing import Any, List, Optional, Sequence
 
 @dataclass
 class CommandRecord:
-    """Represents the outcome of a single system command."""
+    """Represents the outcome of a single tool invocation."""
 
     command: str
     success: bool
     return_code: Optional[int]
     stdout: str
     stderr: str
+    tool_name: Optional[str] = None
 
 
 @dataclass
@@ -33,10 +34,13 @@ class ScanReport:
     thinking_tokens: Optional[int] = None
     output_tokens: Optional[int] = None
     total_tokens: Optional[int] = None
+    python_executor_invocations: int = 0
+    total_tool_invocations: int = 0
 
     def log_command(self, record: dict[str, Any]) -> None:
         """Append a command execution record to the report."""
 
+        tool_name = record.get("tool_name")
         self.commands.append(
             CommandRecord(
                 command=record.get("command_executed", ""),
@@ -44,8 +48,12 @@ class ScanReport:
                 return_code=record.get("return_code"),
                 stdout=record.get("stdout", ""),
                 stderr=record.get("stderr", ""),
+                tool_name=tool_name,
             )
         )
+        self.total_tool_invocations += 1
+        if tool_name == "python_code_executor":
+            self.python_executor_invocations += 1
 
     def update_from_response(self, response: Any) -> None:
         """Extract thinking, final answer, and token usage from the response."""
@@ -154,6 +162,8 @@ class ScanReport:
             "thinking_tokens": self.thinking_tokens,
             "output_tokens": self.output_tokens,
             "total_tokens": self.total_tokens,
+            "python_executor_invocations": self.python_executor_invocations,
+            "total_tool_invocations": self.total_tool_invocations,
         }
 
     def save_json(self, path: Path) -> None:
@@ -191,9 +201,10 @@ class ScanReport:
         )
         if self.commands:
             for record in self.commands:
+                tool_hint = f" tool={record.tool_name}" if record.tool_name else ""
                 lines.extend(
                     [
-                        f"- `{record.command}` (success={record.success}, return_code={record.return_code})",
+                        f"- `{record.command}` (success={record.success}, return_code={record.return_code}{tool_hint})",
                         "  - stdout: " + (record.stdout or "<empty>"),
                         "  - stderr: " + (record.stderr or "<empty>"),
                     ]
@@ -209,6 +220,10 @@ class ScanReport:
                     f"- Thinking tokens: {self.thinking_tokens}",
                     f"- Output tokens: {self.output_tokens}",
                     f"- Total tokens: {self.total_tokens}",
+                    "",
+                    "## Tool Usage",
+                    f"- python_code_executor invocations: {self.python_executor_invocations}",
+                    f"- Total tool invocations: {self.total_tool_invocations}",
                 ]
             )
 

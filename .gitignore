@@ -1,6 +1,6 @@
 reports/
 .venv/
-__pycache__/
+bounter/__pycache__/
 .github/copilot-instructions.md
 .github/instructions/snyk_rules.instructions.md
 
